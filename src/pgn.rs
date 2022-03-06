@@ -491,15 +491,29 @@ fn parse_array(
     offset: f32,
     msg: &[u8; 8],
 ) -> Option<f32> {
+    // TODO: Does this depend on the host's endianness to behave correctly?
     let msg64: u64 = if little_endian {
         LittleEndian::read_u64(msg)
     } else {
         BigEndian::read_u64(msg)
     };
 
+    // TODO: This is a hack
+    let start_bit = if little_endian {
+        start_bit
+    } else {
+        (start_bit / 8) * 8
+    };
+
     let bit_mask: u64 = 2u64.pow(bit_len as u32) - 1;
 
-    Some((((msg64 >> start_bit) & bit_mask) as f32) * scale + offset)
+    let shift = if little_endian {
+        start_bit
+    } else {
+        64 - (bit_len + start_bit)
+    };
+
+    Some((((msg64 >> shift) & bit_mask) as f32) * scale + offset)
 }
 
 /// Internal function for parsing CAN message slices given the definition parameters.  This is where
@@ -894,6 +908,47 @@ mod tests {
         assert_relative_eq!(SPNDEF_BE.parse_message(&MSG_BE[..]).unwrap(), 2728.5);
         assert!(SPNDEF.parse_message(&MSG[..7]).is_none());
         assert!(SPNDEF_BE.parse_message(&MSG_BE[..7]).is_none());
+    }
+
+    #[test]
+    fn test_parse_message_mazda() {
+        let message: [u8; 8] = [0x1c, 0x4b, 0x0c, 0x55, 0x25, 0xc0, 0x19, 0x0f];
+
+        let rpm_spn: SpnDefinition = SpnDefinition::new(
+            "RPM".to_string(),
+            514,
+            2364539904,
+            "description".to_string(),
+            7,
+            16,
+            false,
+            false,
+            0.25,
+            0.0,
+            0.0,
+            8500.0,
+            "rpm".to_string(),
+        );
+
+        assert_relative_eq!(rpm_spn.parse_message(&message).unwrap(), 1810.75);
+
+        let speed_spn: SpnDefinition = SpnDefinition::new(
+            "RPM".to_string(),
+            514,
+            2364539904,
+            "description".to_string(),
+            23,
+            16,
+            false,
+            false,
+            0.01,
+            0.0,
+            0.0,
+            32767.0,
+            "rpm".to_string(),
+        );
+
+        assert_relative_eq!(speed_spn.parse_message(&message).unwrap(), 31.57);
     }
 
     #[test]
